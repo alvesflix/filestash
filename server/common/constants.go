@@ -59,6 +59,7 @@ var (
 	APPNAME                           string = "Filestash"
 	BASE                              string
 	BUILD_REF                         string
+	BUILD_REPO                        string
 	BUILD_DATE                        string
 	LICENSE                           string = "agpl"
 	SECRET_KEY                        string

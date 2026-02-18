@@ -48,10 +48,15 @@ func InitPluginList(code []byte, plgs map[string]model.PluginImpl) error {
 }
 
 func AboutHandler(ctx *App, res http.ResponseWriter, req *http.Request) {
+	repoURL := BUILD_REPO
+	if repoURL == "" {
+		repoURL = "https://github.com/mickael-kerjean/filestash"
+	}
+
 	t, _ := template.
 		New("about").
 		Funcs(map[string]interface{}{
-			"renderPlugin": func(lstr string, commit string) string {
+			"renderPlugin": func(lstr string, commit string, repoURL string) string {
 				if len(lstr) == 0 {
 					return "N/A"
 				} else if commit == "" {
@@ -59,31 +64,31 @@ func AboutHandler(ctx *App, res http.ResponseWriter, req *http.Request) {
 				}
 				list := strings.Split(lstr, " ")
 				for i, _ := range list {
-					list[i] = `<a href="https://github.com/mickael-kerjean/filestash/tree/` + commit +
+					list[i] = `<a href="` + html.EscapeString(repoURL) + `/tree/` + commit +
 						`/server/plugin/` + html.EscapeString(list[i]) + `" target="_blank">` + html.EscapeString(list[i]) + `</a>`
 				}
 				return strings.Join(list, " ")
 			},
 		}).
 		Parse(Page(`
-	  <h1> {{ .Version }} </h1>
-	  <table>
-		<tr> <td style="width:150px;"> Commit hash </td> <td> <a href="https://github.com/mickael-kerjean/filestash/tree/{{ .CommitHash }}">{{ .CommitHash }}</a> </td> </tr>
-		<tr> <td> Binary hash </td> <td> {{ index .Checksum 0}} </td> </tr>
-		<tr> <td> Config hash </td> <td> {{ index .Checksum 1}} </td> </tr>
-		<tr> <td> License </td> <td> {{ .License }} </td> </tr>
-		<tr>
-          <td> Plugins </td>
-          <td>
-            STANDARD [<span class="small">{{ renderPlugin (index .Plugins 0) .CommitHash }}</span>]
-            <br/>
-            ENTERPRISE [<span class="small">{{ renderPlugin (index .Plugins 1) "" }}</span>]
-            <br/>
-            CUSTOM [<span class="small">{{ renderPlugin (index .Plugins 2) "" }}</span>]
-            <br/>
-            RUNTIME [<span class="small">{{ renderPlugin (index .Plugins 3) "" }}</span>]
-          </td>
-        </tr>
+		  <h1> {{ .Version }} </h1>
+		  <table>
+			<tr> <td style="width:150px;"> Commit hash </td> <td> <a href="{{ .RepoURL }}/tree/{{ .CommitHash }}">{{ .CommitHash }}</a> </td> </tr>
+			<tr> <td> Binary hash </td> <td> {{ index .Checksum 0}} </td> </tr>
+			<tr> <td> Config hash </td> <td> {{ index .Checksum 1}} </td> </tr>
+			<tr> <td> License </td> <td> {{ .License }} </td> </tr>
+			<tr>
+	          <td> Plugins </td>
+	          <td>
+	            STANDARD [<span class="small">{{ renderPlugin (index .Plugins 0) .CommitHash .RepoURL }}</span>]
+	            <br/>
+	            ENTERPRISE [<span class="small">{{ renderPlugin (index .Plugins 1) "" .RepoURL }}</span>]
+	            <br/>
+	            CUSTOM [<span class="small">{{ renderPlugin (index .Plugins 2) "" .RepoURL }}</span>]
+	            <br/>
+	            RUNTIME [<span class="small">{{ renderPlugin (index .Plugins 3) "" .RepoURL }}</span>]
+	          </td>
+	        </tr>
 	  </table>
 
 	  <style>
@@ -105,12 +110,14 @@ func AboutHandler(ctx *App, res http.ResponseWriter, req *http.Request) {
 	t.Execute(res, struct {
 		Version    string
 		CommitHash string
+		RepoURL    string
 		Checksum   []string
 		License    string
 		Plugins    []string
 	}{
 		Version:    fmt.Sprintf("Filestash %s.%s", APP_VERSION, BUILD_DATE),
 		CommitHash: BUILD_REF,
+		RepoURL:    repoURL,
 		Checksum: []string{
 			hashFileContent(GetAbsolutePath("filestash"), 0),
 			hashFileContent(GetAbsolutePath(CONFIG_PATH, "config.json"), 0),
