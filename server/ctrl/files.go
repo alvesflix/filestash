@@ -121,6 +121,7 @@ func FileLs(ctx *App, res http.ResponseWriter, req *http.Request) {
 		if err = auth.Cat(ctx, path); err != nil {
 			perms.CanSee = NewBool(false)
 		}
+		ctx.Context = context.WithValue(ctx.Context, "AUDIT", nil)
 	}
 	if model.CanEdit(ctx) == false {
 		perms.CanCreateFile = NewBool(false)
@@ -216,8 +217,12 @@ func FileCat(ctx *App, res http.ResponseWriter, req *http.Request) {
 	}
 
 	for _, auth := range Hooks.Get.AuthorisationMiddleware() {
-		if err = auth.Cat(ctx, path); err != nil {
-			Log.Info("cat::auth '%s'", err.Error())
+		if req.Method == http.MethodHead {
+			if err = auth.Stat(ctx, path); err != nil {
+				SendErrorResult(res, ErrNotAuthorized)
+				return
+			}
+		} else if err = auth.Cat(ctx, path); err != nil {
 			SendErrorResult(res, ErrNotAuthorized)
 			return
 		}
@@ -405,7 +410,7 @@ func FileCat(ctx *App, res http.ResponseWriter, req *http.Request) {
 	}
 	header.Set("Accept-Ranges", "bytes")
 
-	if req.Method != "HEAD" {
+	if req.Method != http.MethodHead {
 		size := 32
 		if thumb != "true" {
 			switch Config.Get("general.buffer_size").String() {
