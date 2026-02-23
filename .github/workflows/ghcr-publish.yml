@@ -6,10 +6,13 @@ on:
       - "**"
     tags:
       - "*"
+  pull_request:
+    branches:
+      - "**"
   workflow_dispatch:
 
 concurrency:
-  group: ghcr-publish-${{ github.ref }}
+  group: ghcr-publish-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -39,12 +42,35 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/filestash
           tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,enable=${{ github.event_name != 'pull_request' }}
+            type=ref,event=tag,enable=${{ github.event_name != 'pull_request' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name != 'pull_request' }}
+            type=semver,pattern={{major}},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Validate publish tags
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          if [ -z "${{ steps.meta.outputs.tags }}" ]; then
+            echo "No Docker tags generated. Refusing to push untagged image."
+            exit 1
+          fi
+
+      - name: Build (PR validation only)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
 
       - name: Build and push
+        if: ${{ github.event_name != 'pull_request' }}
         uses: docker/build-push-action@v6
         with:
           context: .
