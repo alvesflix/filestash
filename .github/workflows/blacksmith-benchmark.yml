@@ -1,0 +1,348 @@
+name: Blacksmith Docker Build Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: "Repetitions per runner (1-3)"
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "3"
+
+permissions:
+  contents: read
+
+jobs:
+  no_cache:
+    name: no-cache / ${{ matrix.runner }} / run-${{ matrix.repeat }}
+    if: ${{ matrix.repeat <= fromJSON(github.event.inputs.repeats || '1') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - blacksmith-2vcpu-ubuntu-2404
+          - blacksmith-4vcpu-ubuntu-2404
+          - blacksmith-8vcpu-ubuntu-2404
+        repeat: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Benchmark no-cache build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          runner_slug="${{ matrix.runner }}"
+          repeat="${{ matrix.repeat }}"
+          out_dir="bench-results"
+          out_file="${out_dir}/no-cache-${runner_slug}-r${repeat}.json"
+
+          mkdir -p "${out_dir}"
+
+          cpu_model="$(lscpu | awk -F: '/Model name/{gsub(/^ +/,"",$2); print $2; exit}')"
+          nproc_count="$(nproc)"
+
+          start_ns="$(date +%s%N)"
+          docker buildx build \
+            --progress=plain \
+            --no-cache \
+            --provenance=false \
+            --sbom=false \
+            --file docker/Dockerfile \
+            .
+          end_ns="$(date +%s%N)"
+
+          duration_s="$(python3 - <<'PY' "$start_ns" "$end_ns"
+import sys
+start = int(sys.argv[1])
+end = int(sys.argv[2])
+print(f"{(end - start) / 1_000_000_000:.3f}")
+PY
+)"
+
+          cat > "${out_file}" <<JSON
+          {
+            "phase": "no_cache",
+            "runner": "${{ matrix.runner }}",
+            "repeat": ${repeat},
+            "duration_seconds": ${duration_s},
+            "nproc": ${nproc_count},
+            "cpu_model": "${cpu_model}",
+            "run_id": "${{ github.run_id }}",
+            "sha": "${{ github.sha }}"
+          }
+          JSON
+
+      - name: Upload no-cache result
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-result-no-cache-${{ matrix.runner }}-r${{ matrix.repeat }}
+          path: bench-results/no-cache-${{ matrix.runner }}-r${{ matrix.repeat }}.json
+          if-no-files-found: error
+
+  cache_populate:
+    name: cache-populate / ${{ matrix.runner }} / run-${{ matrix.repeat }}
+    if: ${{ matrix.repeat <= fromJSON(github.event.inputs.repeats || '1') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - blacksmith-2vcpu-ubuntu-2404
+          - blacksmith-4vcpu-ubuntu-2404
+          - blacksmith-8vcpu-ubuntu-2404
+        repeat: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Populate GHA cache (baseline)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          runner_slug="${{ matrix.runner }}"
+          repeat="${{ matrix.repeat }}"
+          scope="bench-${{ github.run_id }}-${runner_slug}-r${repeat}"
+          out_dir="bench-results"
+          out_file="${out_dir}/cache-populate-${runner_slug}-r${repeat}.json"
+
+          mkdir -p "${out_dir}"
+
+          cpu_model="$(lscpu | awk -F: '/Model name/{gsub(/^ +/,"",$2); print $2; exit}')"
+          nproc_count="$(nproc)"
+
+          start_ns="$(date +%s%N)"
+          docker buildx build \
+            --progress=plain \
+            --provenance=false \
+            --sbom=false \
+            --cache-from type=gha,scope="${scope}" \
+            --cache-to type=gha,mode=max,scope="${scope}" \
+            --file docker/Dockerfile \
+            .
+          end_ns="$(date +%s%N)"
+
+          duration_s="$(python3 - <<'PY' "$start_ns" "$end_ns"
+import sys
+start = int(sys.argv[1])
+end = int(sys.argv[2])
+print(f"{(end - start) / 1_000_000_000:.3f}")
+PY
+)"
+
+          cat > "${out_file}" <<JSON
+          {
+            "phase": "cache_populate",
+            "runner": "${{ matrix.runner }}",
+            "repeat": ${repeat},
+            "duration_seconds": ${duration_s},
+            "cache_scope": "${scope}",
+            "nproc": ${nproc_count},
+            "cpu_model": "${cpu_model}",
+            "run_id": "${{ github.run_id }}",
+            "sha": "${{ github.sha }}"
+          }
+          JSON
+
+      - name: Upload cache-populate result
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-result-cache-populate-${{ matrix.runner }}-r${{ matrix.repeat }}
+          path: bench-results/cache-populate-${{ matrix.runner }}-r${{ matrix.repeat }}.json
+          if-no-files-found: error
+
+  cache_warm:
+    name: cache-warm / ${{ matrix.runner }} / run-${{ matrix.repeat }}
+    needs: cache_populate
+    if: ${{ matrix.repeat <= fromJSON(github.event.inputs.repeats || '1') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - blacksmith-2vcpu-ubuntu-2404
+          - blacksmith-4vcpu-ubuntu-2404
+          - blacksmith-8vcpu-ubuntu-2404
+        repeat: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Benchmark warm cache build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          runner_slug="${{ matrix.runner }}"
+          repeat="${{ matrix.repeat }}"
+          scope="bench-${{ github.run_id }}-${runner_slug}-r${repeat}"
+          out_dir="bench-results"
+          out_file="${out_dir}/cache-warm-${runner_slug}-r${repeat}.json"
+
+          mkdir -p "${out_dir}"
+
+          cpu_model="$(lscpu | awk -F: '/Model name/{gsub(/^ +/,"",$2); print $2; exit}')"
+          nproc_count="$(nproc)"
+
+          start_ns="$(date +%s%N)"
+          docker buildx build \
+            --progress=plain \
+            --provenance=false \
+            --sbom=false \
+            --cache-from type=gha,scope="${scope}" \
+            --cache-to type=gha,mode=max,scope="${scope}" \
+            --file docker/Dockerfile \
+            .
+          end_ns="$(date +%s%N)"
+
+          duration_s="$(python3 - <<'PY' "$start_ns" "$end_ns"
+import sys
+start = int(sys.argv[1])
+end = int(sys.argv[2])
+print(f"{(end - start) / 1_000_000_000:.3f}")
+PY
+)"
+
+          cat > "${out_file}" <<JSON
+          {
+            "phase": "cache_warm",
+            "runner": "${{ matrix.runner }}",
+            "repeat": ${repeat},
+            "duration_seconds": ${duration_s},
+            "cache_scope": "${scope}",
+            "nproc": ${nproc_count},
+            "cpu_model": "${cpu_model}",
+            "run_id": "${{ github.run_id }}",
+            "sha": "${{ github.sha }}"
+          }
+          JSON
+
+      - name: Upload cache-warm result
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-result-cache-warm-${{ matrix.runner }}-r${{ matrix.repeat }}
+          path: bench-results/cache-warm-${{ matrix.runner }}-r${{ matrix.repeat }}.json
+          if-no-files-found: error
+
+  summary:
+    name: Benchmark summary
+    needs: [no_cache, cache_populate, cache_warm]
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - name: Download all benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bench-result-*
+          path: bench-results
+          merge-multiple: true
+
+      - name: Generate summary table
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+import json
+import statistics
+from pathlib import Path
+
+result_files = sorted(Path("bench-results").glob("*.json"))
+if not result_files:
+    raise SystemExit("No benchmark result files found")
+
+rows = []
+for fp in result_files:
+    with fp.open() as f:
+        rows.append(json.load(f))
+
+phases = ["no_cache", "cache_populate", "cache_warm"]
+runners = [
+    "ubuntu-latest",
+    "blacksmith-2vcpu-ubuntu-2404",
+    "blacksmith-4vcpu-ubuntu-2404",
+    "blacksmith-8vcpu-ubuntu-2404",
+]
+
+by_key = {}
+for r in rows:
+    by_key.setdefault((r["phase"], r["runner"]), []).append(r["duration_seconds"])
+
+summary_lines = []
+summary_lines.append("## Docker build benchmark summary")
+summary_lines.append("")
+summary_lines.append("| Phase | Runner | N | Avg (s) | Median (s) | Min (s) | Max (s) |")
+summary_lines.append("|---|---|---:|---:|---:|---:|---:|")
+
+for phase in phases:
+    for runner in runners:
+        vals = by_key.get((phase, runner), [])
+        if not vals:
+            continue
+        summary_lines.append(
+            f"| {phase} | {runner} | {len(vals)} | {statistics.mean(vals):.3f} | {statistics.median(vals):.3f} | {min(vals):.3f} | {max(vals):.3f} |"
+        )
+
+# Speedup table against ubuntu-latest per phase using median
+summary_lines.append("")
+summary_lines.append("| Phase | Runner | Median speedup vs ubuntu-latest |")
+summary_lines.append("|---|---|---:|")
+for phase in phases:
+    base = by_key.get((phase, "ubuntu-latest"), [])
+    if not base:
+        continue
+    base_median = statistics.median(base)
+    for runner in runners:
+        vals = by_key.get((phase, runner), [])
+        if not vals:
+            continue
+        med = statistics.median(vals)
+        speedup = base_median / med if med else 0.0
+        summary_lines.append(f"| {phase} | {runner} | {speedup:.2f}x |")
+
+# runner metadata snapshot
+summary_lines.append("")
+summary_lines.append("### Runner metadata samples")
+summary_lines.append("")
+summary_lines.append("| Phase | Runner | Repeat | nproc | CPU model | Duration (s) |")
+summary_lines.append("|---|---|---:|---:|---|---:|")
+for r in sorted(rows, key=lambda x: (x["phase"], x["runner"], x["repeat"])):
+    summary_lines.append(
+        f"| {r['phase']} | {r['runner']} | {r['repeat']} | {r.get('nproc','')} | {r.get('cpu_model','')} | {r['duration_seconds']:.3f} |"
+    )
+
+text = "\n".join(summary_lines) + "\n"
+Path("benchmark-summary.md").write_text(text)
+print(text)
+PY
+
+          cat benchmark-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-summary
+          path: benchmark-summary.md
+          if-no-files-found: error
