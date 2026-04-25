@@ -13,7 +13,7 @@ import { currentPath, sort, isMobile, isAlreadyFocused } from "./helper.js";
 import { createThing } from "./thing.js";
 import { clearSelection, addSelection, getSelection$, isSelected } from "./state_selection.js";
 import { getState$ } from "./state_config.js";
-import { ls, search } from "./model_files.js";
+import { ls, search, searchUrlParam } from "./model_files.js";
 import { getPermission } from "./model_acl.js";
 
 const ICONS = {
@@ -86,9 +86,11 @@ export default async function(render) {
                             files, ...state, ...rest,
                         })),
                     )),
-                    rxjs.finalize(() => effect(rxjs.of(null).pipe(removeLoader))),
+                    removeLoader,
+                    rxjs.tap(() => searchUrlParam(state.search)),
                 );
             }
+            searchUrlParam(null);
             return rxjs.of({ files, ...state, ...rest });
         }))),
         rxjs.mergeMap((obj) => getPermission(path).pipe(
@@ -97,10 +99,11 @@ export default async function(render) {
         rxjs.mergeMap(({ show_hidden, files, search, ...rest }) => {
             if (show_hidden === false) files = files.filter(({ name }) => name[0] !== ".");
             if (!search) files = sort(files, rest["sort"], rest["order"]);
-            return rxjs.of({ ...rest, files });
+            return rxjs.of({ ...rest, files, search });
         }),
         rxjs.map((data) => ({ ...data, count: count++ })),
         removeLoader,
+        rxjs.switchMap((obj) => refreshScreen$.pipe(rxjs.mapTo(obj))),
         rxjs.mergeMap(({ files, search, ...rest }) => {
             files$.next(files);
             if (files.length === 0) {
@@ -109,7 +112,6 @@ export default async function(render) {
             }
             return rxjs.of({ ...rest, files, search });
         }),
-        rxjs.mergeMap((obj) => refreshScreen$.pipe(rxjs.mapTo(obj))),
         rxjs.mergeMap(({ files, view, search, count, permissions }) => { // STEP1: setup the list of files
             $list.closest(".scroll-y").scrollTop = 0;
             let FILE_HEIGHT, COLUMN_PER_ROW;

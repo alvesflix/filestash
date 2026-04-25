@@ -3,9 +3,10 @@ package ctrl
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"net/http"
 	"os"
+	"slices"
+	"strings"
 
 	. "github.com/mickael-kerjean/filestash/server/common"
 )
@@ -61,7 +62,7 @@ func HealthHandler(ctx *App, res http.ResponseWriter, req *http.Request) {
 	))
 	if err == nil {
 		r.Body.Close()
-		if r.StatusCode != http.StatusOK {
+		if !slices.Contains([]int{http.StatusOK, http.StatusNotFound}, r.StatusCode) {
 			res.WriteHeader(http.StatusInternalServerError)
 			res.Write([]byte(fmt.Sprintf(`{"status": "error", "reason": "endpoint_error", "debug": "status=%d"}`, r.StatusCode)))
 			return
@@ -124,6 +125,6 @@ func HealthHandler(ctx *App, res http.ResponseWriter, req *http.Request) {
 	// SUCCESS!!
 	res.WriteHeader(http.StatusOK)
 	if req.Method != "HEAD" {
-		res.Write([]byte(`{"status": "ok"}`))
+		res.Write([]byte(`{"status": "pass"}`))
 	}
 }
