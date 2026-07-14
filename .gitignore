@@ -20,7 +20,6 @@ package-lock.json
 !server/plugin/plg_video_thumbnail/index_test.go
 cover.*
 www
-.gitignore
 
 
 # frontend

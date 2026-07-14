@@ -1,24 +1,18 @@
-package model
+package extension
 
 import (
 	"archive/zip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	. "github.com/mickael-kerjean/filestash/server/common"
+	"github.com/mickael-kerjean/filestash/server/pkg/extension/adapter"
 )
 
-var PLUGINS = map[string]PluginImpl{}
-
-type PluginImpl struct {
-	Author  string              `json:"author"`
-	Version string              `json:"version"`
-	Modules []map[string]string `json:"modules"`
-}
-
-func PluginDiscovery() error {
+func Discovery() error {
 	entries, err := os.ReadDir(GetAbsolutePath(PLUGIN_PATH))
 	if err != nil {
 		return err
@@ -31,7 +25,7 @@ func PluginDiscovery() error {
 		if strings.HasSuffix(fname, ".zip") == false {
 			continue
 		}
-		name, impl, err := InitModule(fname)
+		name, impl, err := initModule(fname)
 		if err != nil {
 			Log.Error("could not initialise module name=%s err=%s", entry.Name(), err.Error())
 			continue
@@ -61,16 +55,27 @@ func PluginDiscovery() error {
 				if err != nil {
 					return err
 				}
-				m, err := WasmAdapterForMiddleware(b)
+				m, err := adapter.MiddlewareExtension(b)
 				if err != nil {
 					return err
 				}
 				Hooks.Register.Middleware(m)
-			case "http": // TODO
-				return ErrNotImplemented
+			case "workflow::action":
+				b, err := GetPluginFile(name, impl.Modules[i]["entrypoint"])
+				if err != nil {
+					return err
+				}
+				a, err := adapter.WorkflowActionExtension(b)
+				if err != nil {
+					return err
+				}
+				Hooks.Register.WorkflowAction(a)
+			case "xdg-open": // noop
+			default:
+				return fmt.Errorf("%w: %s", ErrNotImplemented, impl.Modules[i]["type"])
 			}
 		}
-		PLUGINS[name] = impl
+		plugins[name] = impl
 	}
 	return nil
 }
@@ -104,7 +109,7 @@ func GetPluginFile(pluginName string, path string) ([]byte, error) {
 	return nil, ErrNotFound
 }
 
-func InitModule(plgName string) (string, PluginImpl, error) {
+func initModule(plgName string) (string, PluginImpl, error) {
 	var plgImpl = PluginImpl{}
 	r, err := zip.OpenReader(JoinPath(GetAbsolutePath(PLUGIN_PATH), plgName))
 	plgName = strings.TrimSuffix(plgName, ".zip")

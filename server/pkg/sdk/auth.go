@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	. "github.com/mickael-kerjean/filestash/server/common"
+	"github.com/mickael-kerjean/filestash/server/pkg/token"
+	"github.com/mickael-kerjean/filestash/server/pkg/tracer"
 )
 
 func (this *Filestash) Authenticate(user, password string, storage string) error {
@@ -17,6 +19,8 @@ func (this *Filestash) Authenticate(user, password string, storage string) error
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Requested-With", "SDKHttpRequest")
+	tracer.Inject(this.Trace, req)
 	opts := []HTTPClientOption{}
 	if this.Insecure {
 		opts = append(opts, WithInsecure)
@@ -33,12 +37,10 @@ func (this *Filestash) Authenticate(user, password string, storage string) error
 	if resp.StatusCode >= 400 {
 		return ErrInvalidPassword
 	}
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name == "auth" {
-			this.Token = cookie.Value
-			this.Storage = storage
-			return nil
-		}
+	this.Storage = storage
+	this.Token = token.ExtractFromCookies(resp.Cookies())
+	if this.Token == "" {
+		return ErrInvalidPassword
 	}
-	return ErrInvalidPassword
+	return nil
 }

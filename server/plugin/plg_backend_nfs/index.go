@@ -56,7 +56,6 @@ func (this NfsShare) Init(params map[string]string, app *App) (IBackend, error) 
 	if params["machine_name"] == "" {
 		params["machine_name"] = "Filestash"
 	}
-	params["username"] = params["uid"]
 
 	if c := NfsCache.Get(params); c != nil {
 		d := c.(*NfsShare)
@@ -75,37 +74,31 @@ func (this NfsShare) Init(params map[string]string, app *App) (IBackend, error) 
 		return d, nil
 	}
 
-	uid, gid, gids := ExtractUserInfo(params["uid"], params["gid"], params["gids"])
-	Log.Debug("plg_backend_nfs::userInfo user=%s uid=%d gid=%d gids=%v", params["uid"], uid, gid, gids)
-	mount, err := nfs.DialMount(params["hostname"])
-	if err != nil {
-		return nil, err
-	}
-	auth := NewAuthUnix(params["machine_name"], uid, gid, gids, params["gids"])
-	v, err := mount.Mount(
-		params["target"],
-		auth,
+	var (
+		gids []GroupLabel
+		err  error
 	)
-	if err != nil {
+	this.uid, this.gid, gids = ExtractUserInfo(params["uid"], params["gid"], params["gids"])
+	if this.mount, err = nfs.DialMount(params["hostname"]); err != nil {
 		return nil, err
 	}
-
-	s := &NfsShare{mount, v, auth, new(sync.Mutex), new(sync.WaitGroup), uid, gid, toGids(gids)}
-	s.wg.Add(1)
+	this.auth = NewAuthUnix(params["machine_name"], this.uid, this.gid, gids, params["gids"])
+	if this.v, err = this.mount.Mount(
+		params["target"],
+		this.auth,
+	); err != nil {
+		return nil, err
+	}
+	this.gids = toGids(gids)
+	this.mu = new(sync.Mutex)
+	this.wg = new(sync.WaitGroup)
+	this.wg.Add(1)
 	go func() {
 		<-app.Context.Done()
-		s.wg.Done()
+		this.wg.Done()
 	}()
-	NfsCache.Set(params, s)
-	return s, nil
-}
-
-func toGids(gids []GroupLabel) []uint32 {
-	g := make([]uint32, len(gids))
-	for i, _ := range gids {
-		g[i] = gids[i].Id
-	}
-	return g
+	NfsCache.Set(params, &this)
+	return &this, nil
 }
 
 func (this NfsShare) LoginForm() Form {
@@ -167,6 +160,9 @@ func (this NfsShare) LoginForm() Form {
 }
 
 func (this NfsShare) Meta(path string) Metadata {
+	if this.uid == 0 {
+		return Metadata{}
+	}
 	this.mu.Lock()
 	defer this.mu.Unlock()
 	f, _, err := this.v.Lookup(strings.TrimSuffix(path, "/"))
@@ -275,7 +271,25 @@ func (this NfsShare) Ls(path string) ([]os.FileInfo, error) {
 }
 
 func (this NfsShare) Stat(path string) (os.FileInfo, error) {
-	return nil, ErrNotImplemented
+	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	f, _, err := this.v.Lookup(this.nfsPath(path))
+	if err != nil {
+		return nil, err
+	} else if f == nil {
+		return nil, ErrNotFound
+	}
+	file := File{FName: filepath.Base(path), FType: "file"}
+	fattr, ok := f.(*nfs.Fattr)
+	if ok == false || fattr == nil {
+		return nil, ErrNotFound
+	} else if fattr.Type == 2 {
+		file.FType = "directory"
+	}
+	file.FSize = int64(fattr.Filesize)
+	file.FTime = int64(fattr.Ctime.Seconds)
+	return file, nil
 }
 
 func (this NfsShare) Cat(path string) (io.ReadCloser, error) {

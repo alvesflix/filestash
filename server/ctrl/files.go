@@ -6,10 +6,10 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"hash/crc32"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"net/url"
@@ -92,7 +92,7 @@ func FileLs(ctx *App, res http.ResponseWriter, req *http.Request) {
 		SendErrorResult(res, err)
 		return
 	}
-	var perms Metadata = Metadata{}
+	perms := Metadata{}
 	if obj, ok := ctx.Backend.(interface{ Meta(path string) Metadata }); ok {
 		perms = obj.Meta(path)
 	}
@@ -151,7 +151,8 @@ func FileLs(ctx *App, res http.ResponseWriter, req *http.Request) {
 	}
 
 	files := make([]FileInfo, len(entries))
-	etagger := fnv.New32()
+	etagger := crc32.NewIEEE()
+	json.NewEncoder(etagger).Encode(perms)
 	etagger.Write([]byte(path + strconv.Itoa(len(entries))))
 	for i := 0; i < len(entries); i++ {
 		name := entries[i].Name()
@@ -161,12 +162,8 @@ func FileLs(ctx *App, res http.ResponseWriter, req *http.Request) {
 			Time: func(mt time.Time) (modTime int64) {
 				if mt.IsZero() == false {
 					modTime = mt.UnixNano() / int64(time.Millisecond)
-
 				}
-				if i < 200 { // etag is generated from a few values to avoid large memory usage
-					etagger.Write([]byte(name + strconv.Itoa(int(modTime))))
-				}
-
+				etagger.Write([]byte(name + strconv.Itoa(int(modTime))))
 				return modTime
 			}(entries[i].ModTime()),
 			Type: func(mode os.FileMode) string {
@@ -531,12 +528,29 @@ func FileSave(ctx *App, res http.ResponseWriter, req *http.Request) {
 		proto = "tus"
 	}
 	if proto == "" && req.Method == http.MethodPost {
+		since := req.Header.Get("If-Unmodified-Since")
+		if since != "" {
+			expected, err := http.ParseTime(since)
+			if err != nil {
+				Log.Debug("files::save action=precondition err=%s", err.Error())
+				SendErrorResult(res, ErrNotValid)
+				return
+			} else if finfo, err := ctx.Backend.Stat(path); err == nil && finfo.ModTime().Unix() != expected.Unix() {
+				SendErrorResult(res, NewError("Modified since", http.StatusPreconditionFailed))
+				return
+			}
+		}
 		err = ctx.Backend.Save(path, req.Body)
 		req.Body.Close()
 		if err != nil {
 			Log.Debug("files::save action=backend_save err=%s", err.Error())
 			SendErrorResult(res, NewError(err.Error(), 403))
 			return
+		}
+		if since != "" {
+			if finfo, err := ctx.Backend.Stat(path); err == nil && finfo.ModTime().Unix() > 0 {
+				h.Set("Last-Modified", finfo.ModTime().UTC().Format(http.TimeFormat))
+			}
 		}
 		SendSuccessResult(res, nil)
 		return
@@ -1007,7 +1021,7 @@ func FileExtract(ctx *App, res http.ResponseWriter, req *http.Request) {
 
 	c, cancel := context.WithTimeout(ctx.Context, time.Duration(zip_timeout())*time.Second)
 	extractPath := func(base string, path string) (string, error) {
-		base = filepath.Dir(base)
+		base = EnforceDirectory(filepath.Dir(base))
 		path = filepath.Join(base, path)
 		if strings.HasPrefix(path, base) == false {
 			return "", ErrFilesystemError
@@ -1108,13 +1122,19 @@ func PathBuilder(ctx *App, path string) (string, error) {
 	if path == "" {
 		return "", NewError("No path available", 400)
 	}
-	sessionPath := ctx.Session["path"]
-	basePath := filepath.ToSlash(filepath.Join(sessionPath, path))
-	if path[len(path)-1:] == "/" && basePath != "/" {
-		basePath += "/"
+	chroot := ctx.Session["path"]
+	fullpath := filepath.ToSlash(filepath.Join(chroot, path))
+	if strings.HasSuffix(path, "/") && fullpath != "/" {
+		fullpath += "/"
 	}
-	if strings.HasPrefix(basePath, ctx.Session["path"]) == false {
-		return "", ErrFilesystemError
+
+	if !strings.HasPrefix(fullpath, EnforceDirectory(chroot)) {
+		if strings.HasSuffix(chroot, "/") {
+			return "", ErrFilesystemError
+		}
+		return chroot, nil
+	} else if !strings.HasSuffix(chroot, "/") && strings.HasSuffix(chroot, path) {
+		return chroot, nil
 	}
-	return basePath, nil
+	return fullpath, nil
 }

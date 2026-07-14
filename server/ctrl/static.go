@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"text/template"
@@ -324,6 +325,7 @@ var preload = [][]string{
 		"/assets/" + BUILD_REF + "/lib/vendor/rxjs/rxjs.min.js",
 		"/assets/" + BUILD_REF + "/lib/vendor/rxjs/rxjs-ajax.min.js",
 		"/assets/" + BUILD_REF + "/lib/vendor/rxjs/rxjs-shared.min.js",
+		"/assets/" + BUILD_REF + "/lib/chromecast.js",
 		"/assets/" + BUILD_REF + "/lib/store.js",
 		"/assets/" + BUILD_REF + "/lib/form.js",
 		"/assets/" + BUILD_REF + "/lib/path.js",
@@ -339,7 +341,6 @@ var preload = [][]string{
 
 		"/assets/" + BUILD_REF + "/locales/index.js",
 		"/assets/" + BUILD_REF + "/model/config.js",
-		"/assets/" + BUILD_REF + "/model/chromecast.js",
 		"/assets/" + BUILD_REF + "/model/session.js",
 		"/assets/" + BUILD_REF + "/model/plugin.js",
 
@@ -453,7 +454,7 @@ func ServeBundle() func(*App, http.ResponseWriter, *http.Request) {
 	}
 
 	quality := 11
-	if isDebug {
+	if isDebug || runtime.NumCPU() <= 4 {
 		quality = 8
 	}
 	chunks, chunksBr, chunksGzip, etags := buildChunks(quality)
