@@ -11,8 +11,19 @@ import (
 )
 
 func main() {
-	commit := strings.TrimSpace(run("git", "rev-parse", "HEAD"))
-	repo := normaliseRepoURL(strings.TrimSpace(run("git", "config", "--get", "remote.origin.url")))
+	commit := strings.TrimSpace(os.Getenv("BUILD_REF"))
+	if commit == "" {
+		commit = strings.TrimSpace(run("git", "rev-parse", "HEAD"))
+	}
+	if len(commit) < 7 {
+		fmt.Fprintln(os.Stderr, "error: BUILD_REF must contain at least 7 characters")
+		os.Exit(1)
+	}
+
+	repo := normaliseRepoURL(os.Getenv("BUILD_REPO"))
+	if repo == "" {
+		repo = normaliseRepoURL(strings.TrimSpace(run("git", "config", "--get", "remote.origin.url")))
+	}
 	if repo == "" {
 		repo = "https://github.com/mickael-kerjean/filestash"
 	}

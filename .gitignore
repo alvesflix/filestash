@@ -17,6 +17,7 @@ package-lock.json
 .tern-port
 .tern-project.js
 *_test.go
+!server/ctrl/static_test.go
 !server/plugin/plg_video_thumbnail/index_test.go
 cover.*
 www

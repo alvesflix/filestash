@@ -39,6 +39,16 @@ func init() {
 	WWWDir = os.DirFS(GetAbsolutePath("../"))
 }
 
+func shortBuildRef(ref string) string {
+	if ref == "" {
+		return "unknown"
+	}
+	if len(ref) <= 7 {
+		return ref
+	}
+	return ref[:7]
+}
+
 func ServeBackofficeHandler(ctx *App, res http.ResponseWriter, req *http.Request) {
 	url := req.URL.Path
 	if filepath.Ext(filepath.Base(url)) != "" {
@@ -248,7 +258,7 @@ func ServeIndex(indexPath string) func(*App, http.ResponseWriter, *http.Request)
 			"favicon": favicon(),
 			"bundle": func() []string {
 				b := make([]string, len(preload))
-				v := BUILD_REF[0:7] + "::" + sign
+				v := shortBuildRef(BUILD_REF) + "::" + sign
 				for i := 0; i < len(preload); i++ {
 					b[i] = fmt.Sprintf("./assets/bundle.js?version=%s&chunk=%d", v, i+1)
 				}

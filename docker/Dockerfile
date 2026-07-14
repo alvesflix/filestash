@@ -3,6 +3,8 @@
 # STEP1: BUILD BACKEND
 FROM golang:1.26-trixie AS builder_backend
 WORKDIR /home/filestash/
+ARG BUILD_REF
+ARG BUILD_REPO
 
 # 1) OS deps first (cached independently of source changes)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -30,7 +32,8 @@ COPY . .
 # 5) Build
 RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
-    make init && \
+    test "${#BUILD_REF}" -ge 7 && \
+    BUILD_REF="$BUILD_REF" BUILD_REPO="$BUILD_REPO" make init && \
     make build && \
     mkdir -p ./dist/data/state/config/ && \
     cp config/config.json ./dist/data/state/config/config.json

@@ -63,6 +63,9 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
+          build-args: |
+            BUILD_REF=${{ github.sha }}
+            BUILD_REPO=https://github.com/${{ github.repository }}
           push: false
           platforms: linux/amd64
           cache-from: type=gha,scope=filestash-amd64
@@ -76,6 +79,9 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
+          build-args: |
+            BUILD_REF=${{ github.sha }}
+            BUILD_REPO=https://github.com/${{ github.repository }}
           push: true
           platforms: linux/amd64
           cache-from: type=gha,scope=filestash-amd64
